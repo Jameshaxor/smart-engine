@@ -3,7 +3,6 @@ from flask_cors import CORS
 import requests
 import json
 import os
-import time
 
 app = Flask(__name__)
 CORS(app)
@@ -11,44 +10,54 @@ CORS(app)
 def call_gemini(query):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return {"summary": "API Key Missing", "ghost_truth": "N/A", "context": "Config Error", "actions": ["Set GEMINI_API_KEY"]}
+        return {"summary": "API Key Missing", "ghost_truth": "N/A", "context": "Config", "actions": ["Check Vercel Env"]}
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
     
-    # We are adding Google Search back in so it can "read" the URL content
+    # We use a more direct instruction to prevent the model from over-searching
     payload = {
-        "contents": [{"parts": [{"text": f"Carefully analyze this specific content/URL: {query}"}]}],
+        "contents": [{"parts": [{"text": f"Analyze this input: {query}"}]}],
         "systemInstruction": {
             "parts": [{
-                "text": "You are a Technical Intelligence Analyst. Analyze the provided content. If it is a URL, use your tools to read it. Return ONLY a JSON object: { \"summary\": \"(Deep synthesis)\", \"ghost_truth\": \"(The technical core/unspoken bias)\", \"context\": \"(Connection to current science/tech trends)\", \"actions\": [\"Step 1\", \"Step 2\", \"Step 3\"] }. Be precise and avoid generic fluff."
+                "text": "You are a Strategic Intelligence Analyst. If a URL is provided, use your search tool to extract its core content. Perform a deep synthesis. Return ONLY a JSON object: { \"summary\": \"High-level synthesis (2-3 sentences)\", \"ghost_truth\": \"The technical reality or unspoken bias\", \"context\": \"Broader industry/science context\", \"actions\": [\"Strategic step 1\", \"Strategic step 2\", \"Strategic step 3\"] }."
             }]
         },
         "tools": [{"google_search": {}}],
-        "generationConfig": { "responseMimeType": "application/json" }
+        "generationConfig": { 
+            "responseMimeType": "application/json",
+            "temperature": 0.2 # Lower temperature for more focused analysis
+        }
     }
 
-    for i in range(2):
-        try:
-            # We give it a long timeout because reading science articles takes time
-            response = requests.post(url, json=payload, timeout=50)
-            result = response.json()
-            if 'candidates' in result:
-                raw_text = result['candidates'][0]['content']['parts'][0]['text']
-                return json.loads(raw_text)
-        except Exception as e:
-            time.sleep(2)
+    try:
+        # Set timeout to 55s to give Flask a chance to return before Vercel kills it at 60s
+        response = requests.post(url, json=payload, timeout=55)
+        result = response.json()
+        
+        if 'candidates' in result:
+            raw_text = result['candidates'][0]['content']['parts'][0]['text']
+            return json.loads(raw_text)
             
-    return {
-        "summary": "The engine could not verify the source in time.",
-        "ghost_truth": "Potential crawl block or high latency.",
-        "context": "Analysis Failed",
-        "actions": ["Copy-paste the text of the article instead of the URL", "Try a different source"]
-    }
+        return {
+            "summary": "The API returned an unexpected response.",
+            "ghost_truth": str(result.get('error', 'Unknown API Error')),
+            "context": "Analysis Interrupted",
+            "actions": ["Verify the URL is public", "Try pasting the text directly"]
+        }
+    except Exception as e:
+        return {
+            "summary": "The source is taking too long to verify.",
+            "ghost_truth": "High latency on the source website.",
+            "context": "Timeout",
+            "actions": ["Copy the article text and paste it here", "Try a shorter URL"]
+        }
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     data = request.json or {}
     query = data.get('query', '')
     if not query:
-        return jsonify({"error": "Empty query"}), 400
-    return jsonify({"analysis": call_gemini(query)})
+        return jsonify({"error": "No query"}), 400
+    
+    result = call_gemini(query)
+    return jsonify({"analysis": result})
