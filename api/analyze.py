@@ -7,23 +7,19 @@ import time
 app = Flask(__name__)
 CORS(app)
 
-# The API key is provided by the environment
 API_KEY = "" 
 
 def call_gemini(query):
-    # Using the preview flash model for high speed and search grounding
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={API_KEY}"
     
     system_prompt = """
-    Analyze the input and return a JSON object ONLY.
-    Structure:
+    Analyze the input and return ONLY a JSON object.
     {
-      "summary": "Direct, high-impact synthesis (2-3 sentences)",
-      "ghost_truth": "The hidden bias or unspoken context",
-      "context": "How this relates to global trends using search grounding",
-      "actions": ["Action 1", "Action 2", "Action 3"]
+      "summary": "2-3 sentence high-impact synthesis.",
+      "ghost_truth": "The hidden bias/context.",
+      "context": "Connection to global trends.",
+      "actions": ["Step 1", "Step 2", "Step 3"]
     }
-    Be sophisticated, objective, and sharp.
     """
 
     payload = {
@@ -33,21 +29,23 @@ def call_gemini(query):
         "generationConfig": { "responseMimeType": "application/json" }
     }
 
-    # Exponential backoff retry
-    for i in range(5):
+    # Reduced retries for faster failure/response
+    for i in range(2):
         try:
-            response = requests.post(url, json=payload, timeout=30)
+            response = requests.post(url, json=payload, timeout=25)
             result = response.json()
-            raw_text = result['candidates'][0]['content']['parts'][0]['text']
-            return json.loads(raw_text)
-        except:
-            time.sleep(2**i)
+            if 'candidates' in result:
+                raw_text = result['candidates'][0]['content']['parts'][0]['text']
+                return json.loads(raw_text)
+        except Exception as e:
+            if i == 0: time.sleep(1)
+            continue
             
     return {
-        "summary": "Analysis timed out.",
-        "ghost_truth": "N/A",
-        "context": "Connection error.",
-        "actions": ["Please try again."]
+        "summary": "Intelligence gathering took too long. The source might be too complex or the API is congested.",
+        "ghost_truth": "Indeterminate",
+        "context": "System Latency",
+        "actions": ["Try a shorter query", "Check if the URL is accessible", "Retry in a few moments"]
     }
 
 @app.route('/api/analyze', methods=['POST'])
@@ -55,7 +53,7 @@ def analyze():
     data = request.json
     query = data.get('query')
     if not query:
-        return jsonify({"error": "No query provided"}), 400
+        return jsonify({"error": "No query"}), 400
     
     result = call_gemini(query)
     return jsonify({"analysis": result})
