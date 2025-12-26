@@ -2,56 +2,45 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
-import time
+import os
 
 app = Flask(__name__)
 CORS(app)
 
-# API key provided by environment
-API_KEY = "" 
+# Vercel provides the API key in the environment variables automatically
+# during the request cycle in this specific setup.
+def get_api_key():
+    # Attempt to get the key from environment variables
+    return os.environ.get("GEMINI_API_KEY", "")
 
 def call_gemini(query):
-    # Using the stable generateContent endpoint
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={API_KEY}"
-    
-    system_prompt = """
-    Return ONLY a JSON object. No markdown.
-    {
-      "summary": "Direct 2-sentence synthesis.",
-      "ghost_truth": "The hidden bias or unspoken context.",
-      "context": "How this relates to broader trends.",
-      "actions": ["Step 1", "Step 2", "Step 3"]
-    }
-    Tone: Intelligence Analyst.
-    """
+    api_key = get_api_key()
+    if not api_key:
+        return {
+            "summary": "API Key Missing.",
+            "ghost_truth": "The system requires an identity to process this request.",
+            "context": "Configuration Error",
+            "actions": ["Add GEMINI_API_KEY to Vercel Environment Variables"]
+        }
 
-    # We removed Google Search grounding to prevent the 10s-30s lag
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
+    
     payload = {
         "contents": [{"parts": [{"text": query}]}],
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "generationConfig": { 
-            "responseMimeType": "application/json",
-            "temperature": 0.7
-        }
+        "systemInstruction": {"parts": [{"text": "Return ONLY a JSON object with keys: summary, ghost_truth, context, actions (list)."}]},
+        "generationConfig": { "responseMimeType": "application/json" }
     }
 
     try:
-        # 50 second timeout to stay under Vercel's 60s limit
-        response = requests.post(url, json=payload, timeout=50)
+        response = requests.post(url, json=payload, timeout=30)
         result = response.json()
         
         if 'candidates' in result:
             raw_text = result['candidates'][0]['content']['parts'][0]['text']
             return json.loads(raw_text)
-        else:
-            return {"summary": "API Error", "ghost_truth": str(result), "context": "Error", "actions": ["Check logs"]}
+        return {"summary": "API Error", "ghost_truth": str(result), "context": "Error", "actions": ["Retry"]}
     except Exception as e:
-        return {
-            "summary": "The engine is currently congested.",
-            "ghost_truth": "Latency issues",
-            "context": "Server Timeout",
-            "actions": ["Try again", "Use a simpler prompt"]
-        }
+        return {"summary": "Connection Error", "ghost_truth": str(e), "context": "Error", "actions": ["Retry"]}
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
